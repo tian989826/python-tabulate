@@ -9,7 +9,7 @@ from functools import partial, reduce
 from html import escape as htmlescape
 from importlib.metadata import PackageNotFoundError, version
 import io
-from itertools import chain, zip_longest as izip_longest
+from itertools import chain, islice, zip_longest as izip_longest
 import math
 import re
 import textwrap
@@ -1044,8 +1044,7 @@ def _padleft(width, s):
     True
 
     """
-    fmt = f"{{0:>{width}s}}"
-    return fmt.format(s)
+    return s.rjust(width)
 
 
 def _padright(width, s):
@@ -1055,8 +1054,7 @@ def _padright(width, s):
     True
 
     """
-    fmt = f"{{0:<{width}s}}"
-    return fmt.format(s)
+    return s.ljust(width)
 
 
 def _padboth(width, s):
@@ -1066,6 +1064,9 @@ def _padboth(width, s):
     True
 
     """
+    # note: str.center() is not equivalent here: for an odd number of fill
+    # characters format() aligns the extra space to the right of the value
+    # while str.center() aligns it to the left
     fmt = f"{{0:^{width}s}}"
     return fmt.format(s)
 
@@ -1252,25 +1253,22 @@ def _align_column(
     return padded_strings
 
 
+# type ranks used by _more_generic(); defined once at module level because
+# _more_generic() is called once per cell when column types are deduced
+_type_ranks = {
+    type(None): 0,
+    bool: 1,
+    int: 2,
+    float: 3,
+    bytes: 4,
+    str: 5,
+}
+_rank_types = {rank: t for t, rank in _type_ranks.items()}
+
+
 def _more_generic(type1, type2):
-    types = {
-        type(None): 0,
-        bool: 1,
-        int: 2,
-        float: 3,
-        bytes: 4,
-        str: 5,
-    }
-    invtypes = {
-        5: str,
-        4: bytes,
-        3: float,
-        2: int,
-        1: bool,
-        0: type(None),
-    }
-    moregeneric = max(types.get(type1, 5), types.get(type2, 5))
-    return invtypes[moregeneric]
+    moregeneric = max(_type_ranks.get(type1, 5), _type_ranks.get(type2, 5))
+    return _rank_types[moregeneric]
 
 
 def _column_type(strings, has_invisible=True, numparse=True):
@@ -1789,6 +1787,10 @@ def tabulate(
     `headersalign` allows for header-wise override starting from left-most
         given header. Possible values are: "global" (no override), "same"
         (follow column alignment), "right", "center", "left".
+    `rowalign` allows for row-wise vertical alignment of multiline cells.
+        Possible values are: "top" (default), "center", "bottom", or a list
+        of these, one per row. It only has an effect on tables with multiline
+        cells in formats which support multiline folding.
 
     Note on intended behaviour: If there is no `tabular_data`, any column
         alignment argument is ignored. Hence, in this case, header
@@ -1818,10 +1820,15 @@ def tabulate(
     other   ?  2.7
     -----  --  ----
 
-    Various plain-text table formats (`tablefmt`) are supported:
-    'plain', 'simple', 'grid', 'pipe', 'orgtbl', 'rst', 'mediawiki',
-    'latex', 'latex_raw', 'latex_booktabs', 'latex_longtable' and tsv.
-    Variable `tabulate_formats`contains the list of currently supported formats.
+    Various table formats (`tablefmt`) are supported: 'plain', 'simple',
+    'grid', 'outline', 'simple_grid', 'rounded_grid', 'heavy_grid',
+    'mixed_grid', 'double_grid', 'fancy_grid', 'colon_grid', 'simple_outline',
+    'rounded_outline', 'heavy_outline', 'mixed_outline', 'double_outline',
+    'fancy_outline', 'pipe', 'github', 'orgtbl', 'jira', 'presto', 'pretty',
+    'psql', 'rst', 'mediawiki', 'moinmoin', 'html', 'unsafehtml', 'latex',
+    'latex_raw', 'latex_booktabs', 'latex_longtable', 'tsv', 'textile' and
+    'asciidoc'. Variable `tabulate_formats` contains the list of currently
+    supported formats.
 
     "plain" format doesn't use any pseudographics to draw tables,
     it separates columns with a double space:
@@ -2308,32 +2315,42 @@ def tabulate(
         headersglobalalign = "left"
 
     # optimization: look for ANSI control codes once,
-    # enable smart width functions only if a control code is found
+    # enable smart width functions only if a control code is found.
     #
-    # convert the headers and rows into a single, tab-delimited string ensuring
-    # that any bytestrings are decoded safely (i.e. errors ignored)
-    plain_text = "\t".join(
+    # Cells are scanned in small batches joined by tabs (decoding bytestrings
+    # safely, i.e. errors ignored), which is equivalent to scanning the whole
+    # table joined into a single string, but avoids allocating a second full
+    # copy of the table's text and allows an early exit as soon as both
+    # properties are known. Batches keep the regex searches fast (they run
+    # on reasonably large strings instead of once per cell).
+    check_multiline = not isinstance(tablefmt, TableFormat) and tablefmt in multiline_formats
+    ansi_search = _ansi_codes.search
+    has_invisible = False
+    is_multiline = False
+    cells = iter(
         chain(
             # headers
             map(_to_str, headers),
             # rows: chain the rows together into a single iterable after mapping
-            # the bytestring conversino to each cell value
+            # the bytestring conversion to each cell value
             chain.from_iterable(map(_to_str, row) for row in list_of_lists),
         )
     )
-
-    has_invisible = _ansi_codes.search(plain_text) is not None
+    while True:
+        batch = list(islice(cells, 256))
+        if not batch:
+            break
+        batch_text = "\t".join(batch)
+        if not has_invisible and ansi_search(batch_text) is not None:
+            has_invisible = True
+        if check_multiline and not is_multiline and _is_multiline(batch_text):
+            is_multiline = True
+        if has_invisible and (is_multiline or not check_multiline):
+            break
 
     enable_widechars = wcwidth is not None and WIDE_CHARS_MODE
-    if (
-        not isinstance(tablefmt, TableFormat)
-        and tablefmt in multiline_formats
-        and _is_multiline(plain_text)
-    ):
+    if is_multiline:
         tablefmt = multiline_formats.get(tablefmt, tablefmt)
-        is_multiline = True
-    else:
-        is_multiline = False
     width_fn = _choose_width_fn(has_invisible, enable_widechars, is_multiline)
 
     # format rows and columns, convert numeric values to strings
@@ -2488,7 +2505,9 @@ def _expand_iterable(original, num_desired, default):
     length `num_desired` completely populated with `default will be returned
     """
     if isinstance(original, Iterable) and not isinstance(original, str):
-        return original + [default] * (num_desired - len(original))
+        # convert to list first so that tuples and other sequences are
+        # accepted too (concatenating a list onto a tuple raises TypeError)
+        return list(original) + [default] * (num_desired - len(original))
     else:
         return [default] * num_desired
 
@@ -2753,7 +2772,7 @@ class _CustomTextWrap(textwrap.TextWrapper):
         # of the next chunk onto the current line as will fit.
         if self.break_long_words and space_left > 0:
             # Tabulate Custom: Build the string up piece-by-piece in order to
-            # take each charcter's width into account
+            # take each character's width into account
             chunk = reversed_chunks[-1]
             i = 1
             # Only count printable characters, so strip_ansi first, index later.

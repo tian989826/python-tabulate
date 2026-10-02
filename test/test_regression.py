@@ -598,3 +598,31 @@ def test_github_escape_pipe_character():
     result = tabulate([["foo|bar"]], headers=("spam|eggs",), tablefmt="github")
     expected = "| spam\\|eggs   |\n|:------------|\n| foo\\|bar     |"
     assert_equal(expected, result)
+
+
+def test_maxheadercolwidths_as_tuple():
+    "Regression: maxheadercolwidths given as a tuple raised TypeError."
+    table = [["alpha", "beta"], ["gamma", "delta"]]
+    headers = ["first column", "second column"]
+    from_list = tabulate(table, headers=headers, maxheadercolwidths=[5, 6])
+    from_tuple = tabulate(table, headers=headers, maxheadercolwidths=(5, 6))
+    print(f"from list: {from_list!r}\n\nfrom tuple: {from_tuple!r}\n")
+    assert_equal(from_list, from_tuple)
+
+
+def test_maxcolwidths_as_tuple():
+    "Regression: maxcolwidths given as a tuple behaves like a list."
+    table = [["alpha", "beta"], ["gamma", "delta"]]
+    from_list = tabulate(table, maxcolwidths=[3, 4])
+    from_tuple = tabulate(table, maxcolwidths=(3, 4))
+    print(f"from list: {from_list!r}\n\nfrom tuple: {from_tuple!r}\n")
+    assert_equal(from_list, from_tuple)
+
+
+def test_rowalign_as_tuple():
+    "Regression: rowalign given as a tuple raised TypeError."
+    table = [["a\nb\nc", "x"], ["d", "y\nz"]]
+    from_list = tabulate(table, tablefmt="grid", rowalign=["center", "bottom"])
+    from_tuple = tabulate(table, tablefmt="grid", rowalign=("center", "bottom"))
+    print(f"from list: {from_list!r}\n\nfrom tuple: {from_tuple!r}\n")
+    assert_equal(from_list, from_tuple)

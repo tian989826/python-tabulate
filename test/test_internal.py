@@ -355,3 +355,11 @@ def test__reinsert_separating_lines():
     expected = rows_to_pipe_table_str(with_rows)
 
     assert_equal(expected, rows_to_pipe_table_str(sans_rows))
+
+
+def test_expand_iterable_with_tuple():
+    "Internal: _expand_iterable() accepts tuples and other non-list sequences"
+    assert_equal(T._expand_iterable((1, 2), 4, None), [1, 2, None, None])
+    assert_equal(T._expand_iterable([1, 2], 4, None), [1, 2, None, None])
+    assert_equal(T._expand_iterable((1, 2), 2, None), [1, 2])
+    assert_equal(T._expand_iterable(3, 2, 3), [3, 3])

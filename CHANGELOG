@@ -1,3 +1,9 @@
+- Unreleased:
+  Fix `TypeError` when `maxheadercolwidths` or `rowalign` is given as a tuple.
+  Improve performance: hoist column type ranks out of `_more_generic()`,
+  use `str.rjust/ljust/center` for padding, and scan cell values for ANSI
+  escape codes with an early exit instead of joining the whole table.
+  Document the `rowalign` option and the full list of table formats.
 - 0.11.0:
   Drop support of the legacy `youtrack` format.
   Add support of the `Decimal` data type.
